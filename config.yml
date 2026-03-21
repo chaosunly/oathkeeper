@@ -1,0 +1,125 @@
+serve:
+  proxy:
+    port: 4455
+  api:
+    port: 4456
+
+log:
+  level: info
+  format: json
+
+access_rules:
+  repositories:
+    - file:///rules.json
+
+# ─── Error Handlers ───────────────────────────────────────────────────────────
+# Browser requests (Accept: text/html) that fail auth → redirect to login.
+# API requests that fail auth → JSON 401/403.
+errors:
+  fallback:
+    - json
+  handlers:
+    json:
+      enabled: true
+      config:
+        verbose: false
+    redirect:
+      enabled: true
+      config:
+        to: ${PUBLIC_URL}/auth/login
+        when:
+          - error:
+              - unauthorized
+              - forbidden
+            request:
+              header:
+                accept:
+                  - text/html
+
+# ─── Authenticators ───────────────────────────────────────────────────────────
+authenticators:
+  # Allow unauthenticated requests through (used for public routes only).
+  anonymous:
+    enabled: true
+    config:
+      subject: guest
+
+  # Validate Kratos browser session cookies.
+  # Calls Kratos /sessions/whoami and extracts the identity UUID as the subject.
+  cookie_session:
+    enabled: true
+    config:
+      check_session_url: http://${KRATOS_INTERNAL}:4433/sessions/whoami
+      preserve_path: true
+      extra_from: "@this"
+      subject_from: "identity.id"
+      only:
+        - ory_kratos_session
+
+  # Validate Hydra-issued JWT bearer tokens locally via JWKS.
+  # hydra.yml sets strategies.access_token: jwt, so all Hydra access tokens are
+  # JWTs signed with Hydra's private key. Oathkeeper fetches and caches the
+  # public JWKS from Hydra's public API (no credentials required) and verifies
+  # signatures locally — no round-trip to Hydra, no client credentials needed.
+  # Trade-off: token revocation is NOT detected; revoked JWTs remain valid until
+  # their exp claim. Given the 1h TTL in hydra.yml:62 this is acceptable.
+  # This is the authenticator used in all protected rules by default.
+  jwt:
+    enabled: true
+    config:
+      jwks_urls:
+        - http://${HYDRA_INTERNAL}:4444/.well-known/jwks.json
+      scope_strategy: exact
+
+  # Introspect Hydra OAuth2 bearer tokens to verify active status and catch
+  # revocation. NOT used in default rules because it requires either:
+  #   a) client_id + client_secret via pre_authorization (public API, port 4444)
+  #   b) confirmation that the admin API path is /admin/oauth2/introspect (v2)
+  #      or /oauth2/introspect (v1) on port 4445.
+  # Enable per-rule if revocation checking is required and client credentials
+  # are available. For most cases the jwt authenticator above is sufficient.
+  oauth2_introspection:
+    enabled: true
+    config:
+      introspection_url: http://${HYDRA_INTERNAL}:4445/admin/oauth2/introspect
+      scope_strategy: exact
+
+# ─── Authorizers ──────────────────────────────────────────────────────────────
+authorizers:
+  allow:
+    enabled: true
+  deny:
+    enabled: true
+  # HTTP POST authorizer used for Keto permission checks.
+  # Per-rule config supplies the remote URL and Go-template JSON payload.
+  #
+  # Why remote_json and not keto_engine_acp_ory:
+  #   keto_engine_acp_ory targets Keto's legacy ACL engine (pre-Zanzibar).
+  #   This repo uses Keto v0.11+ with the Zanzibar relation-tuple model, which
+  #   has no dedicated native authorizer in Oathkeeper v25.4.0. remote_json is
+  #   the documented approach for this model.
+  #
+  # Why this correctly enforces Keto decisions:
+  #   remote_json POSTs the rendered payload and allows/denies based solely on
+  #   the HTTP response status code (2xx = allow, non-2xx = deny).
+  #   Keto's /relation-tuples/check returns 200 when the tuple exists (allowed)
+  #   and 403 when it does not (denied), which maps exactly to that contract.
+  remote_json:
+    enabled: true
+
+# ─── Mutators ─────────────────────────────────────────────────────────────────
+mutators:
+  noop:
+    enabled: true
+  # Forward the authenticated identity as a request header to the upstream service.
+  header:
+    enabled: true
+    config:
+      headers:
+        X-User-Id: "{{ print .Subject }}"
+  # Mint a signed JWT (id_token) for service-to-service auth if needed.
+  id_token:
+    enabled: true
+    config:
+      issuer_url: ${PUBLIC_URL}/
+      jwks_url: file:///jwks.json

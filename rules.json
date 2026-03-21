@@ -1,0 +1,118 @@
+[
+  {
+    "id": "api-auth-public",
+    "version": "v25.4.0",
+    "description": "Public auth API routes: Kratos registration webhook (POST) and OAuth callbacks (GET). Methods are intentionally limited — PUT/PATCH/DELETE are never legitimate on public auth endpoints.",
+    "upstream": {
+      "url": "http://${UI_INTERNAL}:${UI_PORT}",
+      "preserve_host": true
+    },
+    "match": {
+      "url": "http://<[^/]+>/api/auth/<.*>",
+      "methods": ["GET", "POST", "OPTIONS"]
+    },
+    "authenticators": [
+      { "handler": "anonymous" }
+    ],
+    "authorizer": { "handler": "allow" },
+    "mutators": [
+      { "handler": "noop" }
+    ]
+  },
+  {
+    "id": "api-admin-protected",
+    "version": "v25.4.0",
+    "description": "Admin API routes: require an active Kratos session or a valid Hydra JWT bearer token AND GlobalRole:admin membership in Keto.",
+    "upstream": {
+      "url": "http://${UI_INTERNAL}:${UI_PORT}",
+      "preserve_host": true
+    },
+    "match": {
+      "url": "http://<[^/]+>/api/admin/<.*>",
+      "methods": ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
+    },
+    "authenticators": [
+      { "handler": "cookie_session" },
+      { "handler": "jwt" }
+    ],
+    "authorizer": {
+      "handler": "remote_json",
+      "config": {
+        "remote": "http://${KETO_INTERNAL}:4466/relation-tuples/check",
+        "payload": "{\"namespace\":\"GlobalRole\",\"object\":\"admin\",\"relation\":\"members\",\"subject_id\":\"{{ print .Subject }}\"}"
+      }
+    },
+    "mutators": [
+      {
+        "handler": "header",
+        "config": {
+          "headers": {
+            "X-User-Id": "{{ print .Subject }}"
+          }
+        }
+      }
+    ],
+    "errors": [
+      {
+        "handler": "redirect",
+        "config": {
+          "to": "${PUBLIC_URL}/auth/login",
+          "when": [
+            {
+              "error": ["unauthorized", "forbidden"],
+              "request": {
+                "header": { "accept": ["text/html"] }
+              }
+            }
+          ]
+        }
+      },
+      { "handler": "json" }
+    ]
+  },
+  {
+    "id": "api-protected",
+    "version": "v25.4.0",
+    "description": "Protected application API routes: require an active Kratos session or a valid Hydra JWT bearer token.",
+    "upstream": {
+      "url": "http://${UI_INTERNAL}:${UI_PORT}",
+      "preserve_host": true
+    },
+    "match": {
+      "url": "http://<[^/]+>/api/<.*>",
+      "methods": ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
+    },
+    "authenticators": [
+      { "handler": "cookie_session" },
+      { "handler": "jwt" }
+    ],
+    "authorizer": { "handler": "allow" },
+    "mutators": [
+      {
+        "handler": "header",
+        "config": {
+          "headers": {
+            "X-User-Id": "{{ print .Subject }}"
+          }
+        }
+      }
+    ],
+    "errors": [
+      {
+        "handler": "redirect",
+        "config": {
+          "to": "${PUBLIC_URL}/auth/login",
+          "when": [
+            {
+              "error": ["unauthorized", "forbidden"],
+              "request": {
+                "header": { "accept": ["text/html"] }
+              }
+            }
+          ]
+        }
+      },
+      { "handler": "json" }
+    ]
+  }
+]
