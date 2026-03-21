@@ -71,6 +71,26 @@
     ]
   },
   {
+    "id": "api-oauth2-public",
+    "version": "v25.4.0",
+    "description": "OAuth2/OIDC flow handlers: Hydra redirects here with a login_challenge/consent_challenge. Must be anonymous — these endpoints ARE the authentication flow and may be hit before a Kratos session exists.",
+    "upstream": {
+      "url": "http://${UI_INTERNAL}:${UI_PORT}",
+      "preserve_host": true
+    },
+    "match": {
+      "url": "http://<[^/]+>/api/oauth2/<.*>",
+      "methods": ["GET", "POST", "OPTIONS"]
+    },
+    "authenticators": [
+      { "handler": "anonymous" }
+    ],
+    "authorizer": { "handler": "allow" },
+    "mutators": [
+      { "handler": "noop" }
+    ]
+  },
+  {
     "id": "api-protected",
     "version": "v25.4.0",
     "description": "Protected application API routes: require an active Kratos session or a valid Hydra JWT bearer token.",
