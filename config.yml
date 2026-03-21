@@ -106,6 +106,9 @@ authorizers:
   #   and 403 when it does not (denied), which maps exactly to that contract.
   remote_json:
     enabled: true
+    config:
+      remote: http://${KETO_INTERNAL}:4466/relation-tuples/check
+      payload: "{\"namespace\":\"GlobalRole\",\"object\":\"admin\",\"relation\":\"members\",\"subject_id\":\"{{ print .Subject }}\"}"
 
 # ─── Mutators ─────────────────────────────────────────────────────────────────
 mutators:
