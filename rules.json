@@ -99,7 +99,7 @@
       "preserve_host": true
     },
     "match": {
-      "url": "<http|https>://<[^/]+>/api/<.*>",
+      "url": "<http|https>://<[^/]+>/api/<(?!auth|admin|oauth2).*>",
       "methods": ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
     },
     "authenticators": [
