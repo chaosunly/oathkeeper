@@ -193,6 +193,85 @@ Oathkeeper's schema requires the global `remote_json.config` to have `remote` an
 
 **Fix:** Ensure `api-oauth2-public` appears in `rules.json` before `api-protected`.
 
+### Oathkeeper 500 on `/api/oauth2/login` — ambiguous rule match
+
+**Symptoms:**
+
+```
+service_name: ORY Oathkeeper
+error.status_code: 500
+error.message: An internal server error occurred, please contact the system administrator
+http_request.path: /api/oauth2/login
+```
+
+**Cause:** Oathkeeper returns a hard 500 when a request matches more than one access rule simultaneously. `/api/oauth2/login` matched **two rules** at once:
+
+- `api-oauth2-public` — pattern `/api/oauth2/<.*>`
+- `api-protected` — pattern `/api/<.*>` (the `<.*>` wildcard matches `oauth2/login`)
+
+The same ambiguity exists for `/api/auth/*` (vs `api-auth-public`) and `/api/admin/*` (vs `api-admin-protected`).
+
+**Fix:** Add a negative lookahead to the `api-protected` catch-all URL pattern so it does not match paths already claimed by a more-specific rule:
+
+```json
+// before
+"url": "<http|https>://<[^/]+>/api/<.*>"
+
+// after
+"url": "<http|https>://<[^/]+>/api/<(?!auth|admin|oauth2).*>"
+```
+
+The regex `(?!auth|admin|oauth2)` prevents the catch-all from matching any path under `/api/auth/`, `/api/admin/`, or `/api/oauth2/`, eliminating the ambiguity.
+
+**File:** `oathkeeper/rules.json` — `api-protected` rule → `match.url`
+
+---
+
+### Kratos 400 `self_service_flow_return_to_forbidden` — `http://` in `return_to`
+
+**Symptoms:**
+
+```json
+{
+  "error": {
+    "id": "self_service_flow_return_to_forbidden",
+    "code": 400,
+    "reason": "Requested return_to URL \"http://gateway-production-6cac.up.railway.app/api/oauth2/login?login_challenge=...\" is not allowed."
+  }
+}
+```
+
+**Cause:** Kratos's `selfservice.allowed_return_urls` only allows `https://...` URLs. The `return_to` URL was being generated with `http://` instead.
+
+The route handler in `iam-app/app/api/oauth2/login/route.ts` constructed the base URL by reading the `x-forwarded-proto` request header:
+
+```text
+Browser → nginx (sets X-Forwarded-Proto: https) → Oathkeeper → iam-app
+```
+
+nginx correctly sets `X-Forwarded-Proto: https` when forwarding to Oathkeeper. However, Oathkeeper proxies to iam-app over a plain HTTP connection internally and does **not** re-inject `X-Forwarded-Proto: https` into the upstream request. The Next.js route handler therefore saw `x-forwarded-proto: http` (or nothing, falling back to `request.nextUrl.protocol` = `http:`), and constructed `return_to=http://...`.
+
+**Fix:** Replace the header-reconstruction logic with the `NEXT_PUBLIC_APP_URL` environment variable, which is explicitly set to the correct public HTTPS URL in production and is not affected by the internal HTTP proxy chain:
+
+```typescript
+// before — unreliable when Oathkeeper strips X-Forwarded-Proto
+const forwardedProto = request.headers.get("x-forwarded-proto") || request.nextUrl.protocol.replace(":", "");
+const baseUrl = `${forwardedProto}://${forwardedHost}`;
+const returnToUrl = `${baseUrl}/api/oauth2/login?login_challenge=${login_challenge}`;
+
+// after — always uses the configured public HTTPS URL
+const appUrl = (process.env.NEXT_PUBLIC_APP_URL || "").replace(/\/$/, "");
+const returnToUrl = `${appUrl}/api/oauth2/login?login_challenge=${login_challenge}`;
+```
+
+**Files changed:**
+
+- `iam-app/app/api/oauth2/login/route.ts` — base URL construction and Kratos redirect
+
+**Prerequisite:** `NEXT_PUBLIC_APP_URL` must be set to the full public HTTPS URL (e.g. `https://gateway-production-6cac.up.railway.app`) in the iam-app Railway service environment variables. See `.env.example` for the full variable list.
+
+---
+
 ### nginx `connect() failed (111: Connection refused)` for `/auth/*`
 
 **Cause:** nginx's `/auth/` location proxies directly to iam-app. During Railway cold starts, nginx may receive browser RSC prefetch requests before iam-app is fully ready. This is transient and resolves once iam-app is healthy.

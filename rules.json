@@ -22,7 +22,7 @@
   {
     "id": "api-admin-protected",
     "version": "v25.4.0",
-    "description": "Admin API routes: require an active Kratos session or a valid Hydra JWT bearer token AND GlobalRole:admin membership in Keto.",
+    "description": "Admin API routes: require an active Kratos session or a valid Hydra JWT bearer token. Fine-grained authorization (global admin vs org admin) is handled by the IAM app's own middleware.",
     "upstream": {
       "url": "http://${UI_INTERNAL}:${UI_PORT}",
       "preserve_host": true
@@ -35,13 +35,7 @@
       { "handler": "cookie_session" },
       { "handler": "jwt" }
     ],
-    "authorizer": {
-      "handler": "remote_json",
-      "config": {
-        "remote": "http://${KETO_INTERNAL}:4466/relation-tuples/check",
-        "payload": "{\"namespace\":\"GlobalRole\",\"object\":\"admin\",\"relation\":\"members\",\"subject_id\":\"{{ print .Subject }}\"}"
-      }
-    },
+    "authorizer": { "handler": "allow" },
     "mutators": [
       {
         "handler": "header",
